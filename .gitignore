@@ -1,0 +1,19 @@
+﻿# Node
+node_modules/
+dist/
+
+# Environment
+.env
+
+# Logs
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Coverage
+coverage/
