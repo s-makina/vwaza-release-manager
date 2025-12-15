@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Environment variables
+.env
+!.env.example
+
+# Logs
+*.log
+
+# IDE files
+.vscode/
+.idea/

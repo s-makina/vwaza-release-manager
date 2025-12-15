@@ -1,7 +1,53 @@
-# Vwaza Release Manager
+#VWAZA Release Manager - Backend
 
-## Overview
-Vwaza Release Manager is an MVP that simulates a real-world music ingestion pipeline.
+## Setup
+
+1. Install dependencies:
+```bash
+npm install
+```
+
+2. Create a `.env` file based on `.env.example`:
+```bash
+cp .env.example .env
+```
+
+3. Update the `.env` file with your actual configuration values.
+
+##Development
+
+To run the development server:
+```bash
+npm run dev
+```
+
+## Production
+
+To build for production:
+```bash
+npm run build
+```
+
+To start the production server:
+```bash
+npm start
+```
+
+## Project Structure
+
+```
+src/
+├── app.ts          # Fastify appinstance
+├── server.ts       # Server entry point
+├── config/         # Configuration files
+├── db/             # Database connection and queries
+├── modules/        # Feature modules (auth, releases, tracks, etc.)
+├── plugins/        # Fastify plugins
+├── utils/          #Utility functions
+└── tests/          # Test files
+```
+
+##OverviewVwaza Release Manager is an MVP that simulates a real-world music ingestion pipeline.
 It allows artists to upload releases and tracks, processes media asynchronously,
 and enables administrators to review and publish content.
 
@@ -49,7 +95,7 @@ The database schema models the core relationships between:
 The database enforces:
 - Role constraints
 - Release lifecycle status transitions
-- Referential integrity via foreign keys
+- Referentialintegrity via foreign keys
 - Performance through targeted indexing
 
 ---
@@ -59,7 +105,7 @@ When an artist submits a release:
 1. The release enters a `PROCESSING` state.
 2. A background process simulates transcoding and metadata extraction.
 3. Once all tracks are processed, the release automatically transitions to
-   `PENDING_REVIEW`.
+  `PENDING_REVIEW`.
 
 This logic is intentionally separated from HTTP handlers to reflect a
 production-style architecture.
@@ -74,7 +120,7 @@ Role-based access control ensures:
 
 ---
 
-## Error Handling
+## ErrorHandling
 The backend implements centralized error handling to ensure:
 - Consistent API responses
 - Graceful handling of invalid input
@@ -89,7 +135,7 @@ The project includes:
 
 ---
 
-## Trade-offs & Limitations
+## Trade-offs& Limitations
 Due to the 1-week scope:
 - Polling is used instead of WebSockets for real-time updates.
 - Asynchronous processing is simulated in-memory.
