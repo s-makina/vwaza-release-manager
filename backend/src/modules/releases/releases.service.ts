@@ -1,4 +1,5 @@
 import { pool } from '../../db/pool';
+import { releaseProcessingService } from './releaseProcessing.service';
 
 export type ReleaseStatus = 'DRAFT' | 'PROCESSING' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED';
 
@@ -12,6 +13,14 @@ export type ReleaseRow = {
   cover_art_public_url: string | null;
   created_at: string;
 };
+
+export type UpdateReleaseDraftResult =
+  | { ok: true }
+  | { ok: false; reason: 'not_found' | 'not_editable' };
+
+export type SubmitReleaseResult =
+  | { ok: true; state: 'processing_started' | 'already_processing' | 'already_submitted' }
+  | { ok: false; reason: 'not_found' | 'not_submittable' };
 
 export async function createRelease(params: {
   artistId: string;
@@ -34,16 +43,18 @@ export async function createRelease(params: {
   return row;
 }
 
-export async function getReleaseById(params: {
+export async function getReleaseForArtistById(params: {
   releaseId: string;
+  artistId: string;
 }): Promise<ReleaseRow | null> {
   const result = await pool.query<ReleaseRow>(
     `
     SELECT id, artist_id, title, genre, status, cover_art_object_key, cover_art_public_url, created_at
     FROM releases
     WHERE id = $1
+      AND artist_id = $2
     `,
-    [params.releaseId]
+    [params.releaseId, params.artistId]
   );
 
   return result.rows[0] ?? null;
@@ -65,57 +76,120 @@ export async function listReleasesForArtist(params: {
   return result.rows;
 }
 
-export async function listReleasesAdmin(params: {
-  status?: ReleaseStatus;
-}): Promise<ReleaseRow[]> {
-  const result = await pool.query<ReleaseRow>(
-    `
-    SELECT id, artist_id, title, genre, status, cover_art_object_key, cover_art_public_url, created_at
-    FROM releases
-    WHERE ($1::text IS NULL OR status = $1)
-    ORDER BY created_at DESC
-    `,
-    [params.status ?? null]
-  );
-
-  return result.rows;
-}
-
 export async function updateReleaseDraft(params: {
   releaseId: string;
   artistId: string;
   title: string;
   genre: string;
-}): Promise<boolean> {
-  const result = await pool.query(
+}): Promise<UpdateReleaseDraftResult> {
+  const result = await pool.query<{
+    target_count: string;
+    updated_count: string;
+  }>(
     `
-    UPDATE releases
-    SET title = $1,
-        genre = $2
-    WHERE id = $3
-      AND artist_id = $4
-      AND status = 'DRAFT'
+    WITH target AS (
+      SELECT 1
+      FROM releases
+      WHERE id = $1
+        AND artist_id = $2
+    ),
+    updated AS (
+      UPDATE releases
+      SET title = $3,
+          genre = $4
+      WHERE id = $1
+        AND artist_id = $2
+        AND status = 'DRAFT'
+      RETURNING 1
+    )
+    SELECT
+      (SELECT COUNT(*)::text FROM target) AS target_count,
+      (SELECT COUNT(*)::text FROM updated) AS updated_count
     `,
-    [params.title, params.genre, params.releaseId, params.artistId]
+    [params.releaseId, params.artistId, params.title, params.genre]
   );
 
-  return (result.rowCount ?? 0) > 0;
+  const row = result.rows[0];
+  const targetCount = Number.parseInt(row?.target_count ?? '0', 10);
+  const updatedCount = Number.parseInt(row?.updated_count ?? '0', 10);
+
+  if (targetCount === 0) return { ok: false, reason: 'not_found' };
+  if (updatedCount > 0) return { ok: true };
+  return { ok: false, reason: 'not_editable' };
 }
 
-export async function setReleaseStatus(params: {
+export async function submitRelease(params: {
   releaseId: string;
-  newStatus: ReleaseStatus;
-  expectedCurrentStatus?: ReleaseStatus;
-}): Promise<boolean> {
-  const result = await pool.query(
-    `
-    UPDATE releases
-    SET status = $1
-    WHERE id = $2
-      AND ($3::text IS NULL OR status = $3)
-    `,
-    [params.newStatus, params.releaseId, params.expectedCurrentStatus ?? null]
-  );
+  artistId: string;
+}): Promise<SubmitReleaseResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  return (result.rowCount ?? 0) > 0;
+    const found = await client.query<{ status: ReleaseStatus }>(
+      `
+      SELECT status
+      FROM releases
+      WHERE id = $1
+        AND artist_id = $2
+      FOR UPDATE
+      `,
+      [params.releaseId, params.artistId]
+    );
+
+    const currentStatus = found.rows[0]?.status;
+    if (!currentStatus) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+
+    if (currentStatus === 'PENDING_REVIEW' || currentStatus === 'PUBLISHED' || currentStatus === 'REJECTED') {
+      await client.query('COMMIT');
+      return { ok: true, state: 'already_submitted' };
+    }
+
+    if (currentStatus === 'PROCESSING') {
+      await client.query('COMMIT');
+      return { ok: true, state: 'already_processing' };
+    }
+
+    if (currentStatus !== 'DRAFT') {
+      await client.query('COMMIT');
+      return { ok: false, reason: 'not_submittable' };
+    }
+
+    await client.query(
+      `
+      UPDATE releases
+      SET status = 'PROCESSING'
+      WHERE id = $1
+        AND artist_id = $2
+        AND status = 'DRAFT'
+      `,
+      [params.releaseId, params.artistId]
+    );
+
+    await client.query('COMMIT');
+    return { ok: true, state: 'processing_started' };
+  } catch (error: unknown) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function submitReleaseAndStartProcessing(params: {
+  releaseId: string;
+  artistId: string;
+}): Promise<SubmitReleaseResult> {
+  const result = await submitRelease(params);
+
+  if (result.ok && (result.state === 'processing_started' || result.state === 'already_processing')) {
+    releaseProcessingService.enqueue({ releaseId: params.releaseId });
+  }
+
+  return result;
 }

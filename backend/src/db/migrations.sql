@@ -142,3 +142,46 @@ CREATE TRIGGER trg_releases_status_transition
 BEFORE INSERT OR UPDATE OF status ON releases
 FOR EACH ROW
 EXECUTE FUNCTION enforce_release_status_transition();
+
+CREATE OR REPLACE FUNCTION enforce_tracks_only_on_draft_release()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_release_id uuid;
+    v_status text;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        v_release_id := OLD.release_id;
+    ELSE
+        v_release_id := NEW.release_id;
+    END IF;
+
+    SELECT r.status
+    INTO v_status
+    FROM releases r
+    WHERE r.id = v_release_id;
+
+    IF v_status IS NULL THEN
+        RAISE EXCEPTION 'release not found for track'
+            USING ERRCODE = '23503';
+    END IF;
+
+    IF v_status <> 'DRAFT' THEN
+        RAISE EXCEPTION 'tracks can only be modified when release is in DRAFT status'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_tracks_only_on_draft_release ON tracks;
+CREATE TRIGGER trg_tracks_only_on_draft_release
+BEFORE INSERT OR UPDATE OR DELETE ON tracks
+FOR EACH ROW
+EXECUTE FUNCTION enforce_tracks_only_on_draft_release();

@@ -1,7 +1,9 @@
 /// <reference path="./types/fastify-jwt.d.ts" />
 import fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import { authRoutes } from './modules/auth/auth.routes';
+import { adminRoutes } from './modules/admin/admin.routes';
 import { releasesRoutes } from './modules/releases/releases.routes';
 import { storageRoutes } from './modules/storage/storage.routes';
 import { tracksRoutes } from './modules/tracks/tracks.routes';
@@ -32,8 +34,15 @@ app.register(rateLimit, {
   timeWindow: '1 minute'
 });
 
+app.register(multipart, {
+  limits: {
+    fileSize: 60 * 1024 * 1024
+  }
+});
+
 app.register(jwtPlugin);
 app.register(authRoutes);
+app.register(adminRoutes);
 app.register(releasesRoutes);
 app.register(tracksRoutes);
 app.register(storageRoutes);

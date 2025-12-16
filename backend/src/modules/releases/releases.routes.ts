@@ -1,13 +1,10 @@
 import { FastifyInstance } from 'fastify';
-import { pool } from '../../db/pool';
 import {
   createRelease,
-  getReleaseById,
-  listReleasesAdmin,
   listReleasesForArtist,
-  setReleaseStatus,
   updateReleaseDraft,
-  ReleaseStatus
+  getReleaseForArtistById,
+  submitReleaseAndStartProcessing
 } from './releases.service';
 
 const createReleaseSchema = {
@@ -32,34 +29,6 @@ const updateReleaseSchema = {
   }
 };
 
-const listReleasesSchema = {
-  querystring: {
-    type: 'object',
-    properties: {
-      status: { type: 'string' }
-    }
-  }
-};
-
-function isReleaseStatus(value: string): value is ReleaseStatus {
-  return (
-    value === 'DRAFT' ||
-    value === 'PROCESSING' ||
-    value === 'PENDING_REVIEW' ||
-    value === 'PUBLISHED' ||
-    value === 'REJECTED'
-  );
-}
-
-function parseCount(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
 export async function releasesRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { title: string; genre: string } }>(
     '/releases',
@@ -80,22 +49,16 @@ export async function releasesRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  app.get<{ Querystring: { status?: string } }>(
+  app.get(
     '/releases',
     {
-      preHandler: app.authenticate,
-      schema: listReleasesSchema
+      preHandler: app.authenticate
     },
     async (request, reply) => {
       const { userId, role } = request.user;
-      const { status } = request.query;
 
-      if (role === 'ADMIN') {
-        if (status && !isReleaseStatus(status)) {
-          return reply.code(400).send({ message: 'Invalid status' });
-        }
-        const rows = await listReleasesAdmin({ status: status as ReleaseStatus | undefined });
-        return reply.send(rows);
+      if (role !== 'ARTIST') {
+        return reply.code(403).send({ message: 'Artist only' });
       }
 
       const rows = await listReleasesForArtist({ artistId: userId });
@@ -110,12 +73,12 @@ export async function releasesRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params;
       const { userId, role } = request.user;
 
-      const release = await getReleaseById({ releaseId: id });
-      if (!release) {
-        return reply.code(404).send({ message: 'Release not found' });
+      if (role !== 'ARTIST') {
+        return reply.code(403).send({ message: 'Artist only' });
       }
 
-      if (role !== 'ADMIN' && release.artist_id !== userId) {
+      const release = await getReleaseForArtistById({ releaseId: id, artistId: userId });
+      if (!release) {
         return reply.code(404).send({ message: 'Release not found' });
       }
 
@@ -138,9 +101,12 @@ export async function releasesRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(403).send({ message: 'Only ARTIST can edit releases' });
       }
 
-      const ok = await updateReleaseDraft({ releaseId: id, artistId: userId, title, genre });
-      if (!ok) {
-        return reply.code(409).send({ message: 'Release is not editable or does not exist' });
+      const result = await updateReleaseDraft({ releaseId: id, artistId: userId, title, genre });
+      if (!result.ok) {
+        if (result.reason === 'not_found') {
+          return reply.code(404).send({ message: 'Release not found' });
+        }
+        return reply.code(409).send({ message: 'Release is not editable' });
       }
 
       return reply.send({ ok: true });
@@ -154,101 +120,19 @@ export async function releasesRoutes(app: FastifyInstance): Promise<void> {
       const { id } = request.params;
       const { userId, role } = request.user;
 
-      const release = await getReleaseById({ releaseId: id });
-      if (!release) {
-        return reply.code(404).send({ message: 'Release not found' });
-      }
-
-      if (role !== 'ADMIN' && release.artist_id !== userId) {
-        return reply.code(404).send({ message: 'Release not found' });
-      }
-
       if (role !== 'ARTIST') {
-        return reply.code(403).send({ message: 'Only ARTIST can submit releases' });
+        return reply.code(403).send({ message: 'Artist only' });
       }
 
-      const stats = await pool.query<{ total: string; with_audio: string }>(
-        `
-        SELECT
-          COUNT(*)::text AS total,
-          COUNT(*) FILTER (WHERE audio_object_key IS NOT NULL)::text AS with_audio
-        FROM tracks
-        WHERE release_id = $1
-        `,
-        [id]
-      );
-
-      const total = parseCount(stats.rows[0]?.total);
-      const withAudio = parseCount(stats.rows[0]?.with_audio);
-
-      if (total === 0) {
-        return reply.code(400).send({ message: 'Release must have at least one track before submit' });
-      }
-      if (total !== withAudio) {
-        return reply.code(400).send({ message: 'All tracks must have uploaded audio before submit' });
+      const result = await submitReleaseAndStartProcessing({ releaseId: id, artistId: userId });
+      if (!result.ok) {
+        if (result.reason === 'not_found') {
+          return reply.code(404).send({ message: 'Release not found' });
+        }
+        return reply.code(409).send({ message: 'Release is not submittable' });
       }
 
-      const ok = await setReleaseStatus({
-        releaseId: id,
-        newStatus: 'PROCESSING',
-        expectedCurrentStatus: 'DRAFT'
-      });
-
-      if (!ok) {
-        return reply.code(409).send({ message: 'Invalid release state' });
-      }
-
-      return reply.send({ ok: true });
-    }
-  );
-
-  app.post<{ Params: { id: string } }>(
-    '/admin/releases/:id/publish',
-    { preHandler: app.authenticate },
-    async (request, reply) => {
-      const { id } = request.params;
-      const { role } = request.user;
-
-      if (role !== 'ADMIN') {
-        return reply.code(403).send({ message: 'Admin only' });
-      }
-
-      const ok = await setReleaseStatus({
-        releaseId: id,
-        newStatus: 'PUBLISHED',
-        expectedCurrentStatus: 'PENDING_REVIEW'
-      });
-
-      if (!ok) {
-        return reply.code(409).send({ message: 'Invalid release state' });
-      }
-
-      return reply.send({ ok: true });
-    }
-  );
-
-  app.post<{ Params: { id: string } }>(
-    '/admin/releases/:id/reject',
-    { preHandler: app.authenticate },
-    async (request, reply) => {
-      const { id } = request.params;
-      const { role } = request.user;
-
-      if (role !== 'ADMIN') {
-        return reply.code(403).send({ message: 'Admin only' });
-      }
-
-      const ok = await setReleaseStatus({
-        releaseId: id,
-        newStatus: 'REJECTED',
-        expectedCurrentStatus: 'PENDING_REVIEW'
-      });
-
-      if (!ok) {
-        return reply.code(409).send({ message: 'Invalid release state' });
-      }
-
-      return reply.send({ ok: true });
+      return reply.send({ ok: true, state: result.state });
     }
   );
 }

@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { pool } from '../../db/pool';
 import { presignUpload, sanitizeFilename } from './storage.service';
+import { createCloudStorageProvider } from '../../cloud/createCloudProvider';
 
 const presignCoverArtSchema = {
   body: {
@@ -241,6 +242,148 @@ export async function storageRoutes(app: FastifyInstance): Promise<void> {
         }
 
         return reply.send({ ok: true });
+      } catch (error: unknown) {
+        const maybe = error as { statusCode?: number; message?: string };
+        const code = maybe.statusCode ?? 500;
+        return reply.code(code).send({ message: maybe.message ?? 'Internal server error' });
+      }
+    }
+  );
+
+  app.post<{
+    Params: { releaseId: string };
+  }>(
+    '/storage/upload/cover-art/:releaseId',
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { releaseId } = request.params;
+      const { userId, role } = request.user;
+
+      try {
+        await assertReleaseAccess({
+          releaseId,
+          requesterUserId: userId,
+          requesterRole: role
+        });
+
+        const statusCheck = await pool.query<{ status: string }>(
+          'SELECT status FROM releases WHERE id = $1',
+          [releaseId]
+        );
+
+        if ((statusCheck.rows[0]?.status ?? '') !== 'DRAFT') {
+          return reply.code(409).send({ message: 'Release is not editable' });
+        }
+
+        const part = await request.file();
+        if (!part) {
+          return reply.code(400).send({ message: 'Missing file' });
+        }
+
+        const safeName = sanitizeFilename(part.filename);
+        const objectKey = `releases/${releaseId}/cover/${Date.now()}-${safeName}`;
+
+        const provider = createCloudStorageProvider();
+        const uploadResult = await provider.uploadStream({
+          objectKey,
+          contentType: part.mimetype,
+          body: part.file
+        });
+
+        try {
+          const db = await pool.query(
+            `
+            UPDATE releases
+            SET cover_art_object_key = $1,
+                cover_art_public_url = $2,
+                cover_art_url = $2
+            WHERE id = $3
+              AND status = 'DRAFT'
+            `,
+            [uploadResult.objectKey, uploadResult.publicUrl, releaseId]
+          );
+
+          if (db.rowCount === 0) {
+            await provider.deleteObject({ objectKey: uploadResult.objectKey });
+            return reply.code(409).send({ message: 'Release is not editable or does not exist' });
+          }
+
+          return reply.send({
+            objectKey: uploadResult.objectKey,
+            publicUrl: uploadResult.publicUrl
+          });
+        } catch (e: unknown) {
+          await provider.deleteObject({ objectKey: uploadResult.objectKey });
+          throw e;
+        }
+      } catch (error: unknown) {
+        const maybe = error as { statusCode?: number; message?: string };
+        const code = maybe.statusCode ?? 500;
+        return reply.code(code).send({ message: maybe.message ?? 'Internal server error' });
+      }
+    }
+  );
+
+  app.post<{
+    Params: { releaseId: string; trackId: string };
+  }>(
+    '/storage/upload/track-audio/:releaseId/:trackId',
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { releaseId, trackId } = request.params;
+      const { userId, role } = request.user;
+
+      try {
+        await assertReleaseAccess({
+          releaseId,
+          requesterUserId: userId,
+          requesterRole: role
+        });
+
+        const part = await request.file();
+        if (!part) {
+          return reply.code(400).send({ message: 'Missing file' });
+        }
+
+        const safeName = sanitizeFilename(part.filename);
+        const objectKey = `releases/${releaseId}/tracks/${trackId}/audio/${Date.now()}-${safeName}`;
+
+        const provider = createCloudStorageProvider();
+        const uploadResult = await provider.uploadStream({
+          objectKey,
+          contentType: part.mimetype,
+          body: part.file
+        });
+
+        try {
+          const db = await pool.query(
+            `
+            UPDATE tracks t
+            SET audio_object_key = $1,
+                audio_public_url = $2,
+                audio_url = $2
+            FROM releases r
+            WHERE t.id = $3
+              AND t.release_id = r.id
+              AND r.id = $4
+              AND r.status = 'DRAFT'
+            `,
+            [uploadResult.objectKey, uploadResult.publicUrl, trackId, releaseId]
+          );
+
+          if (db.rowCount === 0) {
+            await provider.deleteObject({ objectKey: uploadResult.objectKey });
+            return reply.code(409).send({ message: 'Track/release not editable or does not exist' });
+          }
+
+          return reply.send({
+            objectKey: uploadResult.objectKey,
+            publicUrl: uploadResult.publicUrl
+          });
+        } catch (e: unknown) {
+          await provider.deleteObject({ objectKey: uploadResult.objectKey });
+          throw e;
+        }
       } catch (error: unknown) {
         const maybe = error as { statusCode?: number; message?: string };
         const code = maybe.statusCode ?? 500;
