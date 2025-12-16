@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../api/client';
-import { useAuth } from '../auth/auth';
+import { parseJwtPayload, useAuth } from '../auth/auth';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -45,7 +45,8 @@ export function LoginPage() {
             try {
               const res = await login({ email, password });
               setToken(res.token);
-              navigate('/artist');
+              const payload = parseJwtPayload(res.token);
+              navigate(payload?.role === 'ADMIN' ? '/admin' : '/artist');
             } catch (e: unknown) {
               setError(e instanceof Error ? e.message : 'Login failed');
             } finally {

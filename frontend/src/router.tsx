@@ -6,9 +6,11 @@ import {
   type RouteObject
 } from 'react-router-dom';
 import { AppLayout } from './ui/AppLayout';
-import { RequireAuth } from './auth/auth';
+import { RequireAuth, RequireRole, useAuth } from './auth/auth';
 import { LoginPage } from './pages/LoginPage';
 import { ArtistHomePage } from './pages/ArtistHomePage';
+import { AdminReviewQueuePage } from './pages/AdminReviewQueuePage';
+import { AdminReleaseReviewPage } from './pages/AdminReleaseReviewPage';
 import { ReleaseWizardLayout } from './pages/wizard/ReleaseWizardLayout';
 import { ReleaseDetailsStep } from './pages/wizard/ReleaseDetailsStep';
 import { CoverArtStep } from './pages/wizard/CoverArtStep';
@@ -25,11 +27,17 @@ function NotFound() {
   );
 }
 
+function HomeRedirect() {
+  const { token, role } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  return <Navigate to={role === 'ADMIN' ? '/admin' : '/artist'} replace />;
+}
+
 const routes: RouteObject[] = [
   {
     element: <AppLayout />, 
     children: [
-      { index: true, element: <Navigate to="/artist" replace /> },
+      { index: true, element: <HomeRedirect /> },
       { path: '/login', element: <LoginPage /> },
       {
         path: '/artist',
@@ -52,6 +60,18 @@ const routes: RouteObject[] = [
               { path: 'status', element: <StatusStep /> }
             ]
           }
+        ]
+      },
+      {
+        path: '/admin',
+        element: (
+          <RequireRole role="ADMIN">
+            <Outlet />
+          </RequireRole>
+        ),
+        children: [
+          { index: true, element: <AdminReviewQueuePage /> },
+          { path: 'releases/:releaseId', element: <AdminReleaseReviewPage /> }
         ]
       },
       { path: '*', element: <NotFound /> }

@@ -22,7 +22,7 @@ export function AdminReleaseReviewPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const playableCount = useMemo(
-    () => tracks.filter((t) => Boolean(t.audio_object_key)).length,
+    () => tracks.filter((t) => Boolean(t.audio_public_url || t.audio_object_key)).length,
     [tracks]
   );
 
@@ -130,7 +130,9 @@ export function AdminReleaseReviewPage() {
                     <td>{t.isrc}</td>
                     <td>{t.duration ?? '—'}</td>
                     <td>
-                      {t.audio_object_key ? (
+                      {t.audio_public_url ? (
+                        <audio controls preload="metadata" src={t.audio_public_url} style={{ width: '100%', minWidth: 260 }} />
+                      ) : t.audio_object_key ? (
                         <AdminTrackAudioPlayer trackId={t.id} />
                       ) : (
                         <span className="muted">Missing</span>

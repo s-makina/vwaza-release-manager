@@ -22,3 +22,26 @@ export type TrackRow = {
   audio_public_url: string | null;
   created_at: string;
 };
+
+export type PendingReviewReleaseRow = {
+  id: string;
+  artist_id: string;
+  artist_email: string;
+  title: string;
+  genre: string;
+  status: 'PENDING_REVIEW';
+  cover_art_public_url: string | null;
+  created_at: string;
+};
+
+export type PendingReviewTrackRow = {
+  id: string;
+  release_id: string;
+  title: string;
+  isrc: string;
+  duration: number | null;
+  audio_url: string | null;
+  audio_object_key: string | null;
+  audio_public_url: string | null;
+  created_at: string;
+};
