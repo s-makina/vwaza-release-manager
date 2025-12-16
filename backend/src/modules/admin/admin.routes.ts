@@ -3,6 +3,7 @@ import { GetObjectCommand } from '@aws-sdk/client-s3';
 import {
   approveRelease,
   getPendingReviewTrackAudioRef,
+  listPendingReviewReleaseTracks,
   listPendingReviewReleases,
   rejectRelease
 } from './admin.service';
@@ -65,6 +66,21 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       }
 
       return reply.send({ ok: true });
+    }
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/admin/releases/:id/tracks',
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { role } = request.user;
+      if (role !== 'ADMIN') {
+        return reply.code(403).send({ message: 'Admin only' });
+      }
+
+      const { id } = request.params;
+      const rows = await listPendingReviewReleaseTracks({ releaseId: id });
+      return reply.send(rows);
     }
   );
 

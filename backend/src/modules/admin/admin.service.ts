@@ -21,6 +21,18 @@ export type TrackAudioRef = {
   audio_object_key: string;
 };
 
+export type PendingReviewTrackRow = {
+  id: string;
+  release_id: string;
+  title: string;
+  isrc: string;
+  duration: number | null;
+  audio_url: string | null;
+  audio_object_key: string | null;
+  audio_public_url: string | null;
+  created_at: string;
+};
+
 export async function listPendingReviewReleases(): Promise<PendingReviewReleaseRow[]> {
   const result = await pool.query<PendingReviewReleaseRow>(
     `
@@ -38,6 +50,33 @@ export async function listPendingReviewReleases(): Promise<PendingReviewReleaseR
     WHERE r.status = 'PENDING_REVIEW'
     ORDER BY r.created_at ASC
     `
+  );
+
+  return result.rows;
+}
+
+export async function listPendingReviewReleaseTracks(params: {
+  releaseId: string;
+}): Promise<PendingReviewTrackRow[]> {
+  const result = await pool.query<PendingReviewTrackRow>(
+    `
+    SELECT
+      t.id,
+      t.release_id,
+      t.title,
+      t.isrc,
+      t.duration,
+      t.audio_url,
+      t.audio_object_key,
+      t.audio_public_url,
+      t.created_at
+    FROM tracks t
+    JOIN releases r ON r.id = t.release_id
+    WHERE r.id = $1
+      AND r.status = 'PENDING_REVIEW'
+    ORDER BY t.created_at ASC
+    `,
+    [params.releaseId]
   );
 
   return result.rows;
