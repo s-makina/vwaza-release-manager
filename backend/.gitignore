@@ -11,6 +11,9 @@ dist/
 # Logs
 *.log
 
+# Local diagnostics
+env-check.json
+
 # IDE files
 .vscode/
 .idea/

@@ -1,17 +1,21 @@
-import { FastifyInstance, FastifyRequest } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import fastifyJwt from '@fastify/jwt';
 import { config } from '../config/env';
-import { pool } from '../db/pool';
 
 export async function jwtPlugin(app: FastifyInstance) {
-    app.register(require('@fastify/jwt'), {
+    app.register(fastifyJwt, {
         secret: config.jwtSecret
     });
 
-    app.decorate('authenticate', async function(request: FastifyRequest, reply: any) {
-        try {
-            await request.jwtVerify();
-        } catch (err) {
-            reply.code(401).send({ message: 'Unauthorized' });
+    app.decorate(
+        'authenticate',
+        async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+            try {
+                await request.jwtVerify();
+            } catch {
+                await reply.code(401).send({ message: 'Unauthorized' });
+                return;
+            }
         }
-    });
+    );
 }
